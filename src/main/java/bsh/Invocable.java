@@ -319,7 +319,7 @@ abstract class ExecutingInvocable extends Invocable {
       parameterCount = constructor.getParameterCount();
       isVarargs = constructor.isVarArgs();
     }
-    lastParameterIndex = parameterCount - (isVarargs ? 1 : 0);
+    lastParameterIndex = parameterCount > 1 ? parameterCount -1 : 0;
     varArgsType = isVarArgs() ? getParameterTypes()[lastParameterIndex] : Void.TYPE;
   }
 
@@ -456,6 +456,7 @@ class MethodInvocable extends ExecutingInvocable {
   MethodInvocable(Method method) {
     super(method);
     type = method.getReturnType();
+    lastParameterIndex = getParameterCount() - (isVarArgs() ? 1 : 0);
     if (PROPERTY_PATTERN.matcher(getName()).matches()) {
       setter = getName().startsWith(Reflect.SET_PREFIX);
       getter = !setter && getParameterCount() == 0 && type != Void.TYPE;
