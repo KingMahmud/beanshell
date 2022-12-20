@@ -1,7 +1,0 @@
-// FIX
-bsh.BshScriptTestCase.varargs.bsh  Time elapsed: 0.101 s  <<< ERROR!
-java.lang.RuntimeException: varargs.bsh
-Caused by: bsh.TargetError:
-Sourced file: varargs.bsh : Object constructor : at Line: 101 : in file: varargs.bsh : new VarArgsClass ( )
-Caused by: java.lang.IllegalArgumentException: wrong number of arguments
-Caused by: java.lang.IllegalArgumentException: wrong number of arguments

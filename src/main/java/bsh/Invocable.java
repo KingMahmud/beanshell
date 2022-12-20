@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-/** MethodHandle wrappers to represent invocable members. */
+/** Member wrappers to represent invocable members. */
 public abstract class Invocable implements Member {
 
   protected final List<Object> parameters = new ArrayList<>();
@@ -191,11 +191,11 @@ public abstract class Invocable implements Member {
   }
 
   /** Basic parameter collection with pulling inherited cascade chaining. */
-  public ParameterType collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
     parameters.clear();
     for (int i = 0; i < getLastParameterIndex(); i++)
       parameters.add(coerceToType(params[i], getParameterTypes()[i]));
-    return new ParameterType(parameters);
+    return parameters;
   }
 
   /**
@@ -283,14 +283,6 @@ public abstract class Invocable implements Member {
             .map(t -> null == t ? 39 : t.hashCode())
             .reduce(75, (a, b) -> a ^ b);
   }
-
-  static class ParameterType {
-    List<Object> params;
-
-    ParameterType(List<Object> params) {
-      this.params = params;
-    }
-  }
 }
 
 /** Executable extension for invocable members includes varargs support. */
@@ -319,7 +311,7 @@ abstract class ExecutingInvocable extends Invocable {
       parameterCount = constructor.getParameterCount();
       isVarargs = constructor.isVarArgs();
     }
-    lastParameterIndex = parameterCount > 1 ? parameterCount -1 : 0;
+    lastParameterIndex = parameterCount > 1 ? parameterCount - 1 : 0;
     varArgsType = isVarArgs() ? getParameterTypes()[lastParameterIndex] : Void.TYPE;
   }
 
@@ -357,32 +349,41 @@ abstract class ExecutingInvocable extends Invocable {
    * Pull the cascade inheritance chain for parameter collection. Applies the varargs collection of
    * parameters supplied as an array or as separate args. {@inheritDoc}
    */
+  /*
+  Commenting down line 365 and 381 fixes it
+  bsh.BshScriptTestCase.varargs.bsh  Time elapsed: 0.101 s  <<< ERROR!
+  java.lang.RuntimeException: varargs.bsh
+  Caused by: bsh.TargetError:
+  Sourced file: varargs.bsh : Object constructor : at Line: 101 : in file: varargs.bsh : new VarArgsClass ( )
+  Caused by: java.lang.IllegalArgumentException: wrong number of arguments
+  Caused by: java.lang.IllegalArgumentException: wrong number of arguments
+  */
   @Override
-  public ParameterType collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
     super.collectParamaters(base, params);
     if (isVarArgs()) {
-      if (getLastParameterIndex() < params.length) {
-        if (getParameterCount() == params.length
-            && params[getLastParameterIndex()].getClass().isArray()
-            && getVarArgsComponentType()
-                .isAssignableFrom(params[getLastParameterIndex()].getClass().getComponentType())) {
-          parameters.add(params[getLastParameterIndex()]);
-        } else {
-          int len = params.length - getLastParameterIndex();
-          Object varargs = Array.newInstance(getVarArgsComponentType(), len);
-          for (int i = 0; i < len; i++)
-            Array.set(
-                varargs,
-                i,
-                super.coerceToType(params[getLastParameterIndex() + i], getVarArgsComponentType()));
-          parameters.add(varargs);
-        }
+      // if (getLastParameterIndex() < params.length) {
+      if (getParameterCount() == params.length
+          && params[getLastParameterIndex()].getClass().isArray()
+          && getVarArgsComponentType()
+              .isAssignableFrom(params[getLastParameterIndex()].getClass().getComponentType()))
+        parameters.add(params[getLastParameterIndex()]);
+      else {
+        int len = params.length - getLastParameterIndex();
+        Object varargs = Array.newInstance(getVarArgsComponentType(), len);
+        for (int i = 0; i < len; i++)
+          Array.set(
+              varargs,
+              i,
+              super.coerceToType(params[getLastParameterIndex() + i], getVarArgsComponentType()));
+        parameters.add(varargs);
       }
+      // }
     } else if (null != params && getLastParameterIndex() < params.length)
       parameters.add(
           super.coerceToType(
               params[getLastParameterIndex()], getParameterTypes()[getLastParameterIndex()]));
-    return new ParameterType(parameters);
+    return parameters;
   }
 }
 
@@ -424,7 +425,7 @@ class ConstructorInvocable extends ExecutingInvocable {
    * required. {@inheritDoc}
    */
   @Override
-  public ParameterType collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
     if (isInnerClass() && !isStatic())
       params = Stream.concat(Stream.of(base), Stream.of(params)).toArray();
     return super.collectParamaters(base, params);
@@ -433,7 +434,7 @@ class ConstructorInvocable extends ExecutingInvocable {
   @Override
   protected synchronized Object invokeTarget(Object base, Object[] pars) throws Throwable {
     Reflect.logInvokeMethod("Invoking method (entry): ", this, pars);
-    List<Object> params = collectParamaters(base, pars).params;
+    List<Object> params = collectParamaters(base, pars);
     Reflect.logInvokeMethod("Invoking method (after): ", this, params);
     return ((Constructor<?>) this.member).newInstance(params.toArray());
   }
@@ -486,21 +487,21 @@ class MethodInvocable extends ExecutingInvocable {
 
   /** Pull the cascade inheritance chain for parameter collection. {@inheritDoc} */
   @Override
-  public ParameterType collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
     super.collectParamaters(base, params);
     if (!isStatic()) parameters.add(0, base);
-    return new ParameterType(parameters);
+    return parameters;
   }
 
   @Override
   protected synchronized Object invokeTarget(Object base, Object[] pars) throws Throwable {
     Reflect.logInvokeMethod("Invoking method (entry): ", this, pars);
-    List<Object> params = collectParamaters(base, pars).params;
+    List<Object> params = collectParamaters(base, pars);
     Reflect.logInvokeMethod("Invoking method (after): ", this, params);
-    return ((Method) this.member)
-        .invoke(
-            isStatic() ? null : params.get(0),
-            (isStatic() ? params : params.subList(1, params.size())).toArray());
+    if (isStatic()) return ((Method) this.member).invoke(null, params.toArray());
+    else
+      return ((Method) this.member)
+          .invoke(params.get(0), params.subList(1, params.size()).toArray());
   }
 }
 
@@ -527,12 +528,14 @@ class FieldAccess extends Invocable {
   public synchronized Object invoke(Object base, Object... pars) throws InvocationTargetException {
     try {
       Field field = (Field) this.member;
-      if (0 == pars.length) { // getter
+      if (pars.length == 0) {
+        // getter
         if (isStatic()) return Primitive.wrap(field.get(null), getReturnType());
-        return Primitive.wrap(field.get(base), getReturnType());
-      } else { // setter
+        else return Primitive.wrap(field.get(base), getReturnType());
+      } else {
+        // setter
         if (isStatic()) field.set(null, super.coerceToType(pars[0], getParameterTypes()[0]));
-        field.set(base, super.coerceToType(pars[0], getParameterTypes()[0]));
+        else field.set(base, super.coerceToType(pars[0], getParameterTypes()[0]));
         return null;
       }
     } catch (Throwable ite) {
