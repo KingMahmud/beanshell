@@ -34,14 +34,24 @@ import static bsh.This.Keys.BSHCONSTRUCTORS;
 import static bsh.This.Keys.BSHINIT;
 import static bsh.This.Keys.BSHSTATIC;
 import static bsh.This.Keys.BSHTHIS;
+import static com.android.dx.rop.code.AccessFlags.ACC_ABSTRACT;
+import static com.android.dx.rop.code.AccessFlags.ACC_ENUM;
+import static com.android.dx.rop.code.AccessFlags.ACC_FINAL;
+import static com.android.dx.rop.code.AccessFlags.ACC_INTERFACE;
+import static com.android.dx.rop.code.AccessFlags.ACC_PRIVATE;
+import static com.android.dx.rop.code.AccessFlags.ACC_PROTECTED;
+import static com.android.dx.rop.code.AccessFlags.ACC_PUBLIC;
+import static com.android.dx.rop.code.AccessFlags.ACC_STATIC;
+import static com.android.dx.rop.code.AccessFlags.ACC_SUPER;
+import static com.android.dx.rop.code.AccessFlags.ACC_SYNCHRONIZED;
+import static com.android.dx.rop.code.AccessFlags.ACC_VARARGS;
 
-import com.android.dx.Code;
+import bsh.org.objectweb.asm.ClassWriter;
+import bsh.org.objectweb.asm.Label;
+import bsh.org.objectweb.asm.MethodVisitor;
+import bsh.org.objectweb.asm.Type;
 import com.android.dx.DexMaker;
-import com.android.dx.FieldId;
-import com.android.dx.Local;
 import com.android.dx.TypeId;
-import com.android.dx.rop.code.AccessFlags;
-import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
 import java.lang.reflect.Method;
@@ -82,17 +92,15 @@ import java.util.UUID;
  *
  * @author Pat Niemeyer
  */
-public class ClassGeneratorUtil /* implements Opcodes */ {
-
+public class /* Class */ DexGeneratorUtil {
   /**
    * The switch branch number for the default constructor. The value -1 will cause the default
    * branch to be taken.
    */
   static final int DEFAULTCONSTRUCTOR = -1;
 
-  static final int ACCESS_MODIFIERS =
-      AccessFlags.ACC_PUBLIC | AccessFlags.ACC_PRIVATE | AccessFlags.ACC_PROTECTED;
-  private static final File TMP_DIR = new File(System.getProperty("java.io.tmpdir"));
+  static final int ACCESS_MODIFIERS = ACC_PUBLIC | ACC_PRIVATE | ACC_PROTECTED;
+
   private static final String OBJECT = "Ljava/lang/Object;";
 
   private final String className;
@@ -102,6 +110,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
 
   private final String uuid;
   private final Class<?> superClass;
+
   private final String superClassName;
   private final Class<?>[] interfaces;
   private final Variable[] vars;
@@ -113,7 +122,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
   /**
    * @param packageName e.g. "com.foo.bar"
    */
-  public ClassGeneratorUtil(
+  public /* Class */ DexGeneratorUtil(
       Modifiers classModifiers,
       String className,
       String packageName,
@@ -134,7 +143,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
       if (type == ENUM) superClass = Enum.class;
       else superClass = Object.class;
     this.superClass = superClass;
-    this.superClassName = BSHType.getTypeDescriptor(superClass);
+    this.superClassName = superClass.getName().replace('.', '/');
     if (interfaces == null) interfaces = Reflect.ZERO_TYPES;
     this.interfaces = interfaces;
     this.vars = vars;
@@ -158,11 +167,11 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
         type,
         " ",
         fqClassName,
-        " cons:",
+        " cons : ",
         consl.size(),
-        " meths:",
+        " meths : ",
         methodsl.size(),
-        " vars:",
+        " vars : ",
         vars.length);
 
     if (type == INTERFACE && !classModifiers.hasModifier("abstract"))
@@ -170,20 +179,20 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
     if (type == ENUM && !classModifiers.hasModifier("static")) classModifiers.addModifier("static");
   }
 
-  /** Translate bsh.Modifiers into DexMaker modifier bitflags. */
-  private static int getDexMakerModifiers(Modifiers modifiers) {
+  /** Translate bsh.Modifiers into dex modifier bitflags. */
+  private static int getDexModifiers(Modifiers modifiers) {
     int mods = 0;
     if (modifiers == null) return mods;
 
-    if (modifiers.hasModifier("public")) mods += AccessFlags.ACC_PUBLIC;
-    if (modifiers.hasModifier("private")) mods += AccessFlags.ACC_PRIVATE;
-    if (modifiers.hasModifier("protected")) mods += AccessFlags.ACC_PROTECTED;
-    if (modifiers.hasModifier("static")) mods += AccessFlags.ACC_STATIC;
-    if (modifiers.hasModifier("synchronized")) mods += AccessFlags.ACC_SYNCHRONIZED;
-    if (modifiers.hasModifier("abstract")) mods += AccessFlags.ACC_ABSTRACT;
+    if (modifiers.hasModifier("public")) mods += ACC_PUBLIC;
+    if (modifiers.hasModifier("private")) mods += ACC_PRIVATE;
+    if (modifiers.hasModifier("protected")) mods += ACC_PROTECTED;
+    if (modifiers.hasModifier("static")) mods += ACC_STATIC;
+    if (modifiers.hasModifier("synchronized")) mods += ACC_SYNCHRONIZED;
+    if (modifiers.hasModifier("abstract")) mods += ACC_ABSTRACT;
 
     if ((mods & ACCESS_MODIFIERS) == 0) {
-      mods |= AccessFlags.ACC_PUBLIC;
+      mods |= ACC_PUBLIC;
       modifiers.addModifier("public");
     }
 
@@ -193,14 +202,20 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
   /** Generate a field - static or instance. */
   @SuppressWarnings("SameParameterValue")
   private static void generateField(
-      String fieldName, String type, int modifiers, DexMaker dm, TypeId<?> klass) {
-    generateField(fieldName, type, modifiers, null /*value*/, dm, klass);
+      DexMaker dm, TypeId<?> classTypeId, String fieldName, int modifiers, TypeId<?> fieldTypeId) {
+    generateField(dm, classTypeId, fieldName, modifiers, fieldTypeId, null /* value */);
   }
 
   /** Generate field and assign initial value. */
-  private static void generateField(
-      String fieldName, String type, int modifiers, Object value, DexMaker dm, TypeId<?> klass) {
-    dm.declare(klass.getField(TypeId.get(type), fieldName), modifiers, value);
+  @SuppressWarnings("SameParameterValue")
+  private static <T> void generateField(
+      DexMaker dm,
+      TypeId<?> classTypeId,
+      String fieldName,
+      int modifiers,
+      TypeId<T> fieldTypeId,
+      T value) {
+    dm.declare(classTypeId.getField(fieldTypeId, fieldName), modifiers, value);
   }
 
   /**
@@ -216,17 +231,16 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
   }
 
   // push the class static This object
-  private static <D> Local<This> pushBshStatic(Code code, FieldId<D, This> thiz) {
-    Local<This> target = code.newLocal(thiz.getType());
-    code.sget(thiz, target);
-    return target;
+  private static void pushBshStatic(String fqClassName, String className, MethodVisitor cv) {
+    cv.visitFieldInsn(GETSTATIC, fqClassName, BSHSTATIC + className, "Lbsh/This;");
   }
 
   // push the class instance This object
-  private static <D> Local<This> pushBshThis(Code code, FieldId<D, This> thiz) {
-    Local<This> target = code.newLocal(thiz.getType());
-    code.iget(thiz, target, code.getThis(thiz.getDeclaringType()));
-    return target;
+  private static void pushBshThis(String fqClassName, String className, MethodVisitor cv) {
+    // Push 'this'
+    cv.visitVarInsn(ALOAD, 0);
+    // Get the instance field
+    cv.visitFieldInsn(GETFIELD, fqClassName, BSHTHIS + className, "Lbsh/This;");
   }
 
   private static String getMethodDescriptor(String returnType, String[] paramTypes) {
@@ -257,7 +271,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
     new Reflector().gatherMethods(type);
     // for each filtered abstract method
     meths.stream()
-        .filter(m -> (m.getModifiers() & AccessFlags.ACC_ABSTRACT) > 0)
+        .filter(m -> (m.getModifiers() & ACC_ABSTRACT) > 0)
         .forEach(
             method -> {
               Method[] meth =
@@ -267,9 +281,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
                           m ->
                               method.getName().equals(m.getName())
                                   // not abstract nor private
-                                  && (m.getModifiers()
-                                          & (AccessFlags.ACC_ABSTRACT | AccessFlags.ACC_PRIVATE))
-                                      == 0
+                                  && (m.getModifiers() & (ACC_ABSTRACT | ACC_PRIVATE)) == 0
                                   // with matching parameters
                                   && Types.areSignaturesEqual(
                                       method.getParameterTypes(), m.getParameterTypes()))
@@ -278,11 +290,8 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
                       //              0 if access modifiers for a and b are equal
                       .sorted(
                           (a, b) ->
-                              (a.getModifiers() & AccessFlags.ACC_PUBLIC) > 0
-                                      || (b.getModifiers()
-                                              & (AccessFlags.ACC_PUBLIC
-                                                  | AccessFlags.ACC_PROTECTED))
-                                          == 0
+                              (a.getModifiers() & ACC_PUBLIC) > 0
+                                      || (b.getModifiers() & (ACC_PUBLIC | ACC_PROTECTED)) == 0
                                   ? -1
                                   : (a.getModifiers() & ACCESS_MODIFIERS)
                                           == (b.getModifiers() & ACCESS_MODIFIERS)
@@ -315,17 +324,13 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
    */
   static boolean checkInheritanceRules(
       int parentModifiers, int overriddenModifiers, Class<?> parentClass) {
-    int prnt =
-        parentModifiers
-            & (AccessFlags.ACC_PUBLIC | AccessFlags.ACC_PRIVATE | AccessFlags.ACC_PROTECTED);
-    int chld =
-        overriddenModifiers
-            & (AccessFlags.ACC_PUBLIC | AccessFlags.ACC_PRIVATE | AccessFlags.ACC_PROTECTED);
+    int prnt = parentModifiers & (ACC_PUBLIC | ACC_PRIVATE | ACC_PROTECTED);
+    int chld = overriddenModifiers & (ACC_PUBLIC | ACC_PRIVATE | ACC_PROTECTED);
 
     if (chld == prnt
-        || prnt == AccessFlags.ACC_PRIVATE
-        || chld == AccessFlags.ACC_PUBLIC
-        || prnt == 0 && chld != AccessFlags.ACC_PRIVATE) return true;
+        || prnt == ACC_PRIVATE
+        || chld == ACC_PUBLIC
+        || prnt == 0 && chld != ACC_PRIVATE) return true;
 
     throw new RuntimeException(
         "Cannot reduce the visibility of the inherited method from " + parentClass.getName());
@@ -361,12 +366,27 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
    * @param returnType expect type descriptor string
    * @param cv the code visitor to be used to generate the bytecode.
    */
-  private static void generatePlainReturnCode(Code code, String returnType, Local<?> returnValue) {
-    if (returnType.equals("V")) code.returnVoid();
-    else if (isPrimitive(returnType)) code.returnValue(returnValue);
-    else {
-      code.cast(returnValue, returnValue);
-      code.returnValue(returnValue);
+  private static void generatePlainReturnCode(String returnType, MethodVisitor cv) {
+    if (returnType.equals("V")) cv.visitInsn(RETURN);
+    else if (isPrimitive(returnType)) {
+      int opcode;
+      switch (returnType) {
+        case "D":
+          opcode = DRETURN;
+          break;
+        case "F":
+          opcode = FRETURN;
+          break;
+        case "J":
+          opcode = LRETURN;
+          break;
+        default:
+          opcode = IRETURN;
+      }
+      cv.visitInsn(opcode);
+    } else {
+      cv.visitTypeInsn(CHECKCAST, descriptorToClassName(returnType));
+      cv.visitInsn(ARETURN);
     }
   }
 
@@ -460,59 +480,40 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
   public byte[] generateClass() {
     NameSpace classStaticNameSpace = This.contextStore.get(this.uuid);
     // Force the class public for now...
-    int classMods = getDexMakerModifiers(classModifiers) | AccessFlags.ACC_PUBLIC;
-    if (type == INTERFACE) classMods |= AccessFlags.ACC_INTERFACE | AccessFlags.ACC_ABSTRACT;
-    else if (type == ENUM)
-      classMods |= AccessFlags.ACC_FINAL | AccessFlags.ACC_SUPER | AccessFlags.ACC_ENUM;
+    int classMods = getDexModifiers(classModifiers) | ACC_PUBLIC;
+    if (type == INTERFACE) classMods |= ACC_INTERFACE | ACC_ABSTRACT;
+    else if (type == ENUM) classMods |= ACC_FINAL | ACC_SUPER | ACC_ENUM;
     else {
-      classMods |= AccessFlags.ACC_SUPER;
-      if ((classMods & AccessFlags.ACC_ABSTRACT) > 0)
+      classMods |= ACC_SUPER;
+      if ((classMods & ACC_ABSTRACT) > 0)
         // bsh classes are not abstract
-        classMods -= AccessFlags.ACC_ABSTRACT;
+        classMods &= ~ACC_ABSTRACT;
     }
 
-    String[] interfaceNames = new String[interfaces.length + 1]; // +1 for GeneratedClass
+    TypeId<?>[] interfaceTypeIds = new TypeId<?>[interfaces.length + 1]; // + 1 for GeneratedClass
     for (int i = 0; i < interfaces.length; i++) {
-      interfaceNames[i] = BSHType.getTypeDescriptor(interfaces[i]);
+      interfaceTypeIds[i] = TypeId.get(interfaces[i]);
       if (Reflect.isGeneratedClass(interfaces[i]))
         for (Variable v : Reflect.getVariables(interfaces[i]))
           classStaticNameSpace.setVariableImpl(v);
     }
     // Everyone implements GeneratedClass
-    interfaceNames[interfaces.length] = BSHType.getTypeDescriptor(GeneratedClass.class);
-
+    interfaceTypeIds[interfaces.length] = TypeId.get(GeneratedClass.class);
     DexMaker dm = new DexMaker();
-    TypeId<?> klass = TypeId.get(fqClassName);
+    TypeId<?> classTypeId = TypeId.get(classDescript);
     dm.declare(
-        klass,
-        "",
-        classMods,
-        TypeId.get(superClassName),
-        Arrays.stream(interfaceNames).map(TypeId::get).toArray(TypeId[]::new));
-
+        classTypeId, className + ".java", classMods, TypeId.get(superClass), interfaceTypeIds);
+    TypeId<This> thisTypeId = TypeId.get(This.class);
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
     if (type != INTERFACE)
       // Generate the bsh instance 'This' reference holder field
-      generateField(
-          BSHTHIS + className,
-          BSHType.getTypeDescriptor(This.class),
-          AccessFlags.ACC_PUBLIC, /* cw */
-          dm,
-          klass);
+      generateField(dm, classTypeId, BSHTHIS + className, ACC_PUBLIC, thisTypeId);
     // Generate the static bsh static This reference holder field
     generateField(
-        BSHSTATIC + className,
-        BSHType.getTypeDescriptor(This.class),
-        AccessFlags.ACC_PUBLIC + AccessFlags.ACC_STATIC + AccessFlags.ACC_FINAL, /* cw */
-        dm,
-        klass);
+        dm, classTypeId, BSHSTATIC + className, ACC_PUBLIC | ACC_STATIC | ACC_FINAL, thisTypeId);
     // Generate class UUID
     generateField(
-        "UUID",
-        BSHType.getTypeDescriptor(String.class),
-        AccessFlags.ACC_PUBLIC + AccessFlags.ACC_STATIC + AccessFlags.ACC_FINAL,
-        this.uuid, /* cw */
-        dm,
-        klass);
+        dm, classTypeId, "UUID", ACC_PUBLIC + ACC_STATIC + ACC_FINAL, TypeId.STRING, this.uuid);
 
     // Generate the fields
     for (Variable var : vars) {
@@ -520,7 +521,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
       if (var.hasModifier("private")) continue;
 
       String fType = var.getTypeDescriptor();
-      int modifiers = getDexMakerModifiers(var.getModifiers());
+      int modifiers = getDexModifiers(var.getModifiers());
 
       if (type == INTERFACE) {
         var.setConstant();
@@ -528,14 +529,14 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
         // keep constant fields virtual
         continue;
       } else if (type == ENUM && var.hasModifier("enum")) {
-        modifiers |= AccessFlags.ACC_ENUM | AccessFlags.ACC_FINAL;
+        modifiers |= ACC_ENUM | ACC_FINAL;
         fType = classDescript;
       }
 
-      generateField(var.getName(), fType, modifiers, dm, klass);
+      generateField(dm, classTypeId, var.getName(), modifiers, TypeId.get(fType));
     }
 
-    if (type == ENUM) generateEnumSupport(fqClassName, className, classDescript, dm, klass);
+    if (type == ENUM) generateEnumSupport(fqClassName, className, classDescript, cw);
 
     // Generate the static initializer.
     generateStaticInitializer(cw);
@@ -546,15 +547,15 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
       // Don't generate private constructors
       if (constructors[i].hasModifier("private")) continue;
 
-      int modifiers = getDexMakerModifiers(constructors[i].getModifiers());
-      if (constructors[i].isVarArgs()) modifiers |= AccessFlags.ACC_VARARGS;
+      int modifiers = getASMModifiers(constructors[i].getModifiers());
+      if (constructors[i].isVarArgs()) modifiers |= ACC_VARARGS;
       generateConstructor(i, constructors[i].getParamTypeDescriptors(), modifiers, cw);
       hasConstructor = true;
     }
 
     // If no other constructors, generate a default constructor
     if (type == CLASS && !hasConstructor)
-      generateConstructor(DEFAULTCONSTRUCTOR /*index*/, new String[0], AccessFlags.ACC_PUBLIC, cw);
+      generateConstructor(DEFAULTCONSTRUCTOR /*index*/, new String[0], ACC_PUBLIC, cw);
 
     // Generate methods
     for (DelayedEvalBshMethod method : methods) {
@@ -566,9 +567,9 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
           && !method.hasModifier("static")
           && !method.hasModifier("default")
           && !method.hasModifier("abstract")) method.getModifiers().addModifier("abstract");
-      int modifiers = getDexMakerModifiers(method.getModifiers());
-      if (method.isVarArgs()) modifiers |= AccessFlags.ACC_VARARGS;
-      boolean isStatic = (modifiers & AccessFlags.ACC_STATIC) > 0;
+      int modifiers = getASMModifiers(method.getModifiers());
+      if (method.isVarArgs()) modifiers |= ACC_VARARGS;
+      boolean isStatic = (modifiers & ACC_STATIC) > 0;
 
       generateMethod(
           className,
@@ -588,7 +589,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
             method.getName(),
             method.getReturnTypeDescriptor(),
             method.getParamTypeDescriptors(),
-            AccessFlags.ACC_PUBLIC,
+            ACC_PUBLIC,
             cw);
     }
 
@@ -606,49 +607,38 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
    * @param classDescript class descriptor string
    * @param cw current class writer
    */
-  private void generateEnumSupport(
-      String fqClassName, String className, String classDescript, DexMaker dm, TypeId<?> klass) {
+  private void generateEnumSupport(DexMaker dm, TypeId<?> classTypeId, ClassWriter cw) {
+    dm.declare(classTypeId.getMethod())
     // generate enum values() method delegated to static This.enumValues.
-    Code code =
-        dm.declare(
-            klass.getMethod(TypeId.get("[" + classDescript), "value"),
-            AccessFlags.ACC_PUBLIC | AccessFlags.ACC_STATIC);
-    FieldId<?, This> thizField =
-        TypeId.get(fqClassName).getField(TypeId.get(This.class), BSHSTATIC + className);
-    Local<Object[]> enumValues = code.newLocal(TypeId.get(Object[].class));
-    Local<This> thiz = pushBshStatic(code, thizField);
-    code.invokeVirtual(
-        thizField.getType().getMethod(TypeId.get(Object[].class), "enumValues"), enumValues, thiz);
-    generatePlainReturnCode(code, "[" + classDescript, enumValues);
+    MethodVisitor cv =
+        cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "values", "()[" + classDescript, null, null);
+    pushBshStatic(fqClassName, className, cv);
+    cv.visitMethodInsn(INVOKEVIRTUAL, "bsh/This", "enumValues", "()[Ljava/lang/Object;", false);
+    generatePlainReturnCode("[" + classDescript, cv);
+    cv.visitMaxs(0, 0);
     // generate Enum.valueOf delegate method
-    code =
-        dm.declare(
-            klass.getMethod(TypeId.get(classDescript), "valueOf", TypeId.get(String.class)),
-            AccessFlags.ACC_PUBLIC | AccessFlags.ACC_STATIC);
-    Local<Class> enumKlass = code.newLocal(TypeId.get(Class.class));
-    code.loadDeferredClassConstant(enumKlass, TypeId.get(classDescript));
-    Local<Enum> valueOf = code.newLocal(TypeId.get(Enum.class));
-    code.invokeStatic(
-        TypeId.get(Enum.class).getMethod(TypeId.get(Enum.class), "valueOf"),
-        valueOf,
-        enumKlass,
-        code.getParameter(0, TypeId.get(String.class)));
-    generatePlainReturnCode(code, classDescript, valueOf);
-
+    cv =
+        cw.visitMethod(
+            ACC_PUBLIC | ACC_STATIC, "valueOf", "(Ljava/lang/String;)" + classDescript, null, null);
+    cv.visitLdcInsn(Type.getType(classDescript));
+    cv.visitVarInsn(ALOAD, 0);
+    cv.visitMethodInsn(
+        INVOKESTATIC,
+        "java/lang/Enum",
+        "valueOf",
+        "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;",
+        false);
+    generatePlainReturnCode(classDescript, cv);
+    cv.visitMaxs(0, 0);
     // generate default private constructor and initInstance call
-    code =
-        dm.declare(
-            klass.getConstructor(TypeId.get(String.class), TypeId.INT),
-            AccessFlags.ACC_PRIVATE);
-    code.invokeSuper(
-        TypeId.get(Enum.class).getConstructor(TypeId.get(String.class), TypeId.INT),
-        null,
-        code.getThis(TypeId.get(Enum.class)),
-        code.getParameter(0, TypeId.get(String.class)),
-        code.getParameter(1, TypeId.INT));
+    cv = cw.visitMethod(ACC_PRIVATE, "<init>", "(Ljava/lang/String;I)V", null, null);
+    cv.visitVarInsn(ALOAD, 0);
+    cv.visitVarInsn(ALOAD, 1);
+    cv.visitVarInsn(ILOAD, 2);
+    cv.visitMethodInsn(INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false);
     cv.visitVarInsn(ALOAD, 0);
     cv.visitLdcInsn(className);
-    generateParameterReifierCode(new String[0], false /*isStatic*/, code);
+    generateParameterReifierCode(new String[0], false /*isStatic*/, cv);
     cv.visitMethodInsn(
         INVOKESTATIC,
         "bsh/This",
@@ -692,32 +682,28 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
       String returnType,
       String[] paramTypes,
       int modifiers,
-      DexMaker dm,
-      TypeId<?> klass) {
-    boolean isStatic = (modifiers & AccessFlags.ACC_STATIC) != 0;
+      ClassWriter cw) {
+    String[] exceptions = null;
+    boolean isStatic = (modifiers & ACC_STATIC) != 0;
 
     if (returnType == null) {
       // map loose return type to Object
       returnType = OBJECT;
     }
 
+    String methodDescriptor = getMethodDescriptor(returnType, paramTypes);
+
+    String paramTypesSig = getTypeParameterSignature(paramTypes);
+
     // Generate method body
-    Code code =
-        dm.declare(
-            klass.getMethod(
-                TypeId.get(returnType),
-                methodName,
-                Arrays.stream(paramTypes).map(TypeId::get).toArray(TypeId[]::new)),
-            modifiers);
+    MethodVisitor cv =
+        cw.visitMethod(modifiers, methodName, methodDescriptor, paramTypesSig, exceptions);
 
-    if ((modifiers & AccessFlags.ACC_ABSTRACT) != 0) return;
+    if ((modifiers & ACC_ABSTRACT) != 0) return;
 
-    FieldId<?, This> thizField =
-        TypeId.get(fqClassName).getField(TypeId.get(This.class), BSHSTATIC + className);
     // Generate code to push the BSHTHIS or BSHSTATIC field
-    Local<This> thiz;
-    if (isStatic || type == INTERFACE) thiz = pushBshStatic(code, thizField);
-    else thiz = pushBshThis(code, thizField);
+    if (isStatic || type == INTERFACE) pushBshStatic(fqClassName, className, cv);
+    else pushBshThis(fqClassName, className, cv);
 
     // Push the name of the method as a constant
     cv.visitLdcInsn(methodName);
@@ -796,8 +782,7 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
 
     // Generate code to invoke the ClassGeneratorUtil initStatic() method
     MethodVisitor cv =
-        cw.visitMethod(
-            AccessFlags.ACC_STATIC, "<clinit>", "()V", null /*sig*/, null /*exceptions*/);
+        cw.visitMethod(ACC_STATIC, "<clinit>", "()V", null /*sig*/, null /*exceptions*/);
 
     // initialize _bshStaticThis
     cv.visitFieldInsn(GETSTATIC, fqClassName, "UUID", "Ljava/lang/String;");
@@ -933,15 +918,35 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
     // Unload the arguments from the ConstructorArgs object
     for (String type : paramTypes) {
       final String method;
-      if (type.equals("Z")) method = "getBoolean";
-      else if (type.equals("B")) method = "getByte";
-      else if (type.equals("C")) method = "getChar";
-      else if (type.equals("S")) method = "getShort";
-      else if (type.equals("I")) method = "getInt";
-      else if (type.equals("J")) method = "getLong";
-      else if (type.equals("D")) method = "getDouble";
-      else if (type.equals("F")) method = "getFloat";
-      else method = "getObject";
+      switch (type) {
+        case "Z":
+          method = "getBoolean";
+          break;
+        case "B":
+          method = "getByte";
+          break;
+        case "C":
+          method = "getChar";
+          break;
+        case "S":
+          method = "getShort";
+          break;
+        case "I":
+          method = "getInt";
+          break;
+        case "J":
+          method = "getLong";
+          break;
+        case "D":
+          method = "getDouble";
+          break;
+        case "F":
+          method = "getFloat";
+          break;
+        default:
+          method = "getObject";
+          break;
+      }
 
       // invoke the iterator method on the ConstructorArgs
       cv.visitVarInsn(ALOAD, consArgsVar); // push the ConstructorArgs
@@ -976,8 +981,10 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
       ClassWriter cw) {
     String[] exceptions = null;
 
-    if (returnType == null) // map loose return to Object
-    returnType = OBJECT;
+    if (returnType == null) {
+      // map loose return to Object
+      returnType = OBJECT;
+    }
 
     String methodDescriptor = getMethodDescriptor(returnType, paramTypes);
 
@@ -1015,25 +1022,40 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
    * @param cv the code visitor to be used to generate the bytecode.
    * @param isStatic the enclosing methods is static
    */
-  private void generateParameterReifierCode(Code code, boolean isStatic, String[] paramTypes) {
-    Local<Integer> length = code.newLocal(TypeId.INT);
-    code.loadConstant(length, paramTypes.length);
-    Local<Object[]> array = code.newLocal(TypeId.get(Object[].class));
-    code.newArray(array, length);
+  private void generateParameterReifierCode(
+      String[] paramTypes, boolean isStatic, final MethodVisitor cv) {
+    cv.visitIntInsn(SIPUSH, paramTypes.length);
+    cv.visitTypeInsn(ANEWARRAY, "java/lang/Object");
     int localVarIndex = isStatic ? 0 : 1;
     for (int i = 0; i < paramTypes.length; ++i) {
       String param = paramTypes[i];
-      Local<Integer> index = code.newLocal(TypeId.INT);
-      code.loadConstant(index, i);
+      cv.visitInsn(DUP);
+      cv.visitIntInsn(SIPUSH, i);
       if (isPrimitive(param)) {
-        Local<?> value = code.newLocal(TypeId.get(param));
-        code.loadConstant(value, code.getParameter(i, TypeId.get(param)));
-        Local<Primitive> primitiveLocal = code.newLocal(TypeId.get(Primitive.class));
-        code.newInstance(primitiveLocal, TypeId.get(Primitive.class).getConstructor(TypeId.get(param)), value);
-        code.aput(array, index, primitiveLocal);
+        int opcode;
+        switch (param) {
+          case "F":
+            opcode = FLOAD;
+            break;
+          case "D":
+            opcode = DLOAD;
+            break;
+          case "J":
+            opcode = LLOAD;
+            break;
+          default:
+            opcode = ILOAD;
+            break;
+        }
+
+        String type = "bsh/Primitive";
+        cv.visitTypeInsn(NEW, type);
+        cv.visitInsn(DUP);
+        cv.visitVarInsn(opcode, localVarIndex);
+        cv.visitMethodInsn(INVOKESPECIAL, type, "<init>", "(" + param + ")V", false);
+        cv.visitInsn(AASTORE);
       } else {
-        // If null wrap value as bsh.Primitive.NULL
-        code.la
+        // If null wrap value as bsh.Primitive.NULL.
         cv.visitVarInsn(ALOAD, localVarIndex);
         Label isnull = new Label();
         cv.visitJumpInsn(IFNONNULL, isnull);
@@ -1069,33 +1091,42 @@ public class ClassGeneratorUtil /* implements Opcodes */ {
       int opcode = IRETURN;
       String type;
       String meth;
-      if (returnType.equals("Z")) {
-        type = "java/lang/Boolean";
-        meth = "booleanValue";
-      } else if (returnType.equals("C")) {
-        type = "java/lang/Character";
-        meth = "charValue";
-      } else if (returnType.equals("B")) {
-        type = "java/lang/Byte";
-        meth = "byteValue";
-      } else if (returnType.equals("S")) {
-        type = "java/lang/Short";
-        meth = "shortValue";
-      } else if (returnType.equals("F")) {
-        opcode = FRETURN;
-        type = "java/lang/Float";
-        meth = "floatValue";
-      } else if (returnType.equals("J")) {
-        opcode = LRETURN;
-        type = "java/lang/Long";
-        meth = "longValue";
-      } else if (returnType.equals("D")) {
-        opcode = DRETURN;
-        type = "java/lang/Double";
-        meth = "doubleValue";
-      } else /*if (returnType.equals("I"))*/ {
-        type = "java/lang/Integer";
-        meth = "intValue";
+      switch (returnType) {
+        case "Z":
+          type = "java/lang/Boolean";
+          meth = "booleanValue";
+          break;
+        case "C":
+          type = "java/lang/Character";
+          meth = "charValue";
+          break;
+        case "B":
+          type = "java/lang/Byte";
+          meth = "byteValue";
+          break;
+        case "S":
+          type = "java/lang/Short";
+          meth = "shortValue";
+          break;
+        case "F":
+          opcode = FRETURN;
+          type = "java/lang/Float";
+          meth = "floatValue";
+          break;
+        case "J":
+          opcode = LRETURN;
+          type = "java/lang/Long";
+          meth = "longValue";
+          break;
+        case "D":
+          opcode = DRETURN;
+          type = "java/lang/Double";
+          meth = "doubleValue";
+          break;
+        default: // case "I":
+          type = "java/lang/Integer";
+          meth = "intValue";
+          break;
       }
 
       String desc = returnType;
