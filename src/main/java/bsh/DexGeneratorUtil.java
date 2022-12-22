@@ -50,7 +50,9 @@ import bsh.org.objectweb.asm.ClassWriter;
 import bsh.org.objectweb.asm.Label;
 import bsh.org.objectweb.asm.MethodVisitor;
 import bsh.org.objectweb.asm.Type;
+import com.android.dx.Code;
 import com.android.dx.DexMaker;
+import com.android.dx.Local;
 import com.android.dx.TypeId;
 import java.io.IOException;
 import java.io.Reader;
@@ -62,8 +64,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * ClassGeneratorUtil utilizes the ASM (www.objectweb.org) bytecode generator by Eric Bruneton in
- * order to generate class "stubs" for BeanShell at runtime.
+ * ClassGeneratorUtil utilizes the DexMaker (<a href="https://github.com/linkedin/dexmaker">...</a>)
+ * bytecode generator in order to generate class "stubs" for BeanShell at runtime.
  *
  * <p>
  *
@@ -91,6 +93,7 @@ import java.util.UUID;
  * <p>
  *
  * @author Pat Niemeyer
+ * @author Muhtaseem Al Mahmud
  */
 public class /* Class */ DexGeneratorUtil {
   /**
@@ -231,8 +234,11 @@ public class /* Class */ DexGeneratorUtil {
   }
 
   // push the class static This object
-  private static void pushBshStatic(String fqClassName, String className, MethodVisitor cv) {
-    cv.visitFieldInsn(GETSTATIC, fqClassName, BSHSTATIC + className, "Lbsh/This;");
+  private static Local<This> pushBshStatic(Code code, TypeId<?> classTypeId, String className) {
+    TypeId<This> thisTypeId = TypeId.get(This.class);
+    Local<This> thisLocal = code.newLocal(thisTypeId);
+    code.sget(classTypeId.getField(thisTypeId, BSHSTATIC + className), thisLocal);
+    return thisLocal;
   }
 
   // push the class instance This object
@@ -363,30 +369,16 @@ public class /* Class */ DexGeneratorUtil {
   /**
    * Generate return code for a normal bytecode
    *
-   * @param returnType expect type descriptor string
-   * @param cv the code visitor to be used to generate the bytecode.
+   * @param code the code instance to be used to generate the bytecode.
+   * @param returnTypeId the expected return typeid
+   * @param returnLocal the local to return
    */
-  private static void generatePlainReturnCode(String returnType, MethodVisitor cv) {
-    if (returnType.equals("V")) cv.visitInsn(RETURN);
-    else if (isPrimitive(returnType)) {
-      int opcode;
-      switch (returnType) {
-        case "D":
-          opcode = DRETURN;
-          break;
-        case "F":
-          opcode = FRETURN;
-          break;
-        case "J":
-          opcode = LRETURN;
-          break;
-        default:
-          opcode = IRETURN;
-      }
-      cv.visitInsn(opcode);
-    } else {
-      cv.visitTypeInsn(CHECKCAST, descriptorToClassName(returnType));
-      cv.visitInsn(ARETURN);
+  private static void generatePlainReturnCode(
+      Code code, TypeId<?> returnTypeId, Local<?> returnLocal) {
+    if (returnTypeId.equals(TypeId.VOID)) code.returnVoid();
+    else {
+      code.cast(returnLocal, returnLocal);
+      code.returnValue(returnLocal);
     }
   }
 
@@ -504,7 +496,7 @@ public class /* Class */ DexGeneratorUtil {
     dm.declare(
         classTypeId, className + ".java", classMods, TypeId.get(superClass), interfaceTypeIds);
     TypeId<This> thisTypeId = TypeId.get(This.class);
-    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    ClassWriter cw = null;
     if (type != INTERFACE)
       // Generate the bsh instance 'This' reference holder field
       generateField(dm, classTypeId, BSHTHIS + className, ACC_PUBLIC, thisTypeId);
@@ -602,39 +594,46 @@ public class /* Class */ DexGeneratorUtil {
    * values we greatly reduce the required bytecode needed by delegating to This.enumValues and
    * building the array dynamically.
    *
-   * @param fqClassName fully qualified class name
-   * @param className class name string
-   * @param classDescript class descriptor string
-   * @param cw current class writer
+   * @param dm current dexmaker
+   * @param classTypeId class typeid
    */
+  @SuppressWarnings({"unchecked", "rawtypes"})
   private void generateEnumSupport(DexMaker dm, TypeId<?> classTypeId, ClassWriter cw) {
-    dm.declare(classTypeId.getMethod())
+    TypeId<?> valuesReturnTypeId = TypeId.get("[" + classDescript);
+    Code code =
+        dm.declare(classTypeId.getMethod(valuesReturnTypeId, "values"), ACC_PUBLIC | ACC_STATIC);
     // generate enum values() method delegated to static This.enumValues.
-    MethodVisitor cv =
-        cw.visitMethod(ACC_PUBLIC | ACC_STATIC, "values", "()[" + classDescript, null, null);
-    pushBshStatic(fqClassName, className, cv);
-    cv.visitMethodInsn(INVOKEVIRTUAL, "bsh/This", "enumValues", "()[Ljava/lang/Object;", false);
-    generatePlainReturnCode("[" + classDescript, cv);
-    cv.visitMaxs(0, 0);
+    MethodVisitor cv = null;
+    Local<Object[]> valuesReturnLocal = code.newLocal(TypeId.get(Object[].class));
+    Local<This> valuesThisLocal = pushBshStatic(code, classTypeId, className);
+    code.invokeVirtual(
+        valuesThisLocal.getType().getMethod(valuesReturnLocal.getType(), "enumValues"),
+        valuesReturnLocal,
+        valuesThisLocal);
+    generatePlainReturnCode(code, valuesReturnTypeId, valuesReturnLocal);
     // generate Enum.valueOf delegate method
-    cv =
-        cw.visitMethod(
-            ACC_PUBLIC | ACC_STATIC, "valueOf", "(Ljava/lang/String;)" + classDescript, null, null);
-    cv.visitLdcInsn(Type.getType(classDescript));
-    cv.visitVarInsn(ALOAD, 0);
-    cv.visitMethodInsn(
-        INVOKESTATIC,
-        "java/lang/Enum",
-        "valueOf",
-        "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/Enum;",
-        false);
-    generatePlainReturnCode(classDescript, cv);
-    cv.visitMaxs(0, 0);
+    TypeId<?> valueOfReturnTypeId = TypeId.get(classDescript);
+    code =
+        dm.declare(
+            classTypeId.getMethod(valueOfReturnTypeId, "valueOf", TypeId.STRING),
+            ACC_PUBLIC | ACC_STATIC);
+    Local<String> valueOfStringParameterLocal = code.getParameter(0, TypeId.STRING);
+    Local<Class> valueOfClassLocal = code.newLocal(TypeId.get(Class.class));
+    TypeId<Enum> enumTypeId = TypeId.get(Enum.class);
+    Local<Enum> valueOfReturnLocal = code.newLocal(enumTypeId);
+    code.loadDeferredClassConstant(valueOfClassLocal, valueOfReturnTypeId);
+    code.invokeStatic(
+        enumTypeId.getMethod(enumTypeId, "valueOf", valueOfClassLocal.getType(), TypeId.STRING),
+        valueOfReturnLocal,
+        valueOfClassLocal,
+        valueOfStringParameterLocal);
+    generatePlainReturnCode(code, valueOfReturnTypeId, valueOfReturnLocal);
     // generate default private constructor and initInstance call
-    cv = cw.visitMethod(ACC_PRIVATE, "<init>", "(Ljava/lang/String;I)V", null, null);
-    cv.visitVarInsn(ALOAD, 0);
-    cv.visitVarInsn(ALOAD, 1);
-    cv.visitVarInsn(ILOAD, 2);
+    code = dm.declare(classTypeId.getConstructor(TypeId.STRING, TypeId.INT), ACC_PRIVATE);
+    Local<?> constructorThisLocal = code.getThis(classTypeId);
+    Local<String> constructorStringParameterLocal = code.getParameter(0, TypeId.STRING);
+    Local<Integer> constructorIntParameterLocal = code.getParameter(1, TypeId.INT);
+
     cv.visitMethodInsn(INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false);
     cv.visitVarInsn(ALOAD, 0);
     cv.visitLdcInsn(className);
