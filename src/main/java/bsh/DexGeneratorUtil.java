@@ -234,11 +234,10 @@ public class /* Class */ DexGeneratorUtil {
   }
 
   // push the class static This object
-  private static Local<This> pushBshStatic(Code code, TypeId<?> classTypeId, String className) {
-    TypeId<This> thisTypeId = TypeId.get(This.class);
-    Local<This> thisLocal = code.newLocal(thisTypeId);
-    code.sget(classTypeId.getField(thisTypeId, BSHSTATIC + className), thisLocal);
-    return thisLocal;
+  @SuppressWarnings("unchecked")
+  private static void pushBshStatic(
+      Code code, String className, TypeId<?> classTypeId, Local<?> local) {
+    code.sget(classTypeId.getField(local.getType(), BSHSTATIC + className), local);
   }
 
   // push the class instance This object
@@ -598,54 +597,64 @@ public class /* Class */ DexGeneratorUtil {
    * @param classTypeId class typeid
    */
   @SuppressWarnings({"unchecked", "rawtypes"})
-  private void generateEnumSupport(DexMaker dm, TypeId<?> classTypeId, ClassWriter cw) {
-    TypeId<?> valuesReturnTypeId = TypeId.get("[" + classDescript);
+  private <E extends Enum> void generateEnumSupport(DexMaker dm, TypeId<E> classTypeId) {
+    TypeId<Object[]> objectArrayTypeId = TypeId.get(Object[].class);
+    TypeId<E[]> valuesReturnTypeId = TypeId.get("[" + classTypeId.getName());
     Code code =
         dm.declare(classTypeId.getMethod(valuesReturnTypeId, "values"), ACC_PUBLIC | ACC_STATIC);
     // generate enum values() method delegated to static This.enumValues.
-    MethodVisitor cv = null;
-    Local<Object[]> valuesReturnLocal = code.newLocal(TypeId.get(Object[].class));
-    Local<This> valuesThisLocal = pushBshStatic(code, classTypeId, className);
-    code.invokeVirtual(
+    Local<Object[]> valuesReturnLocal = code.newLocal(objectArrayTypeId);
+    Local<This> valuesThisLocal = code.newLocal(TypeId.get(This.class));
+    pushBshStatic(code, className, classTypeId, valuesThisLocal);
+    code.invokeSuper(
         valuesThisLocal.getType().getMethod(valuesReturnLocal.getType(), "enumValues"),
         valuesReturnLocal,
         valuesThisLocal);
     generatePlainReturnCode(code, valuesReturnTypeId, valuesReturnLocal);
     // generate Enum.valueOf delegate method
-    TypeId<?> valueOfReturnTypeId = TypeId.get(classDescript);
     code =
         dm.declare(
-            classTypeId.getMethod(valueOfReturnTypeId, "valueOf", TypeId.STRING),
-            ACC_PUBLIC | ACC_STATIC);
+            classTypeId.getMethod(classTypeId, "valueOf", TypeId.STRING), ACC_PUBLIC | ACC_STATIC);
     Local<String> valueOfStringParameterLocal = code.getParameter(0, TypeId.STRING);
     Local<Class> valueOfClassLocal = code.newLocal(TypeId.get(Class.class));
     TypeId<Enum> enumTypeId = TypeId.get(Enum.class);
     Local<Enum> valueOfReturnLocal = code.newLocal(enumTypeId);
-    code.loadDeferredClassConstant(valueOfClassLocal, valueOfReturnTypeId);
+    code.loadDeferredClassConstant(valueOfClassLocal, classTypeId);
     code.invokeStatic(
         enumTypeId.getMethod(enumTypeId, "valueOf", valueOfClassLocal.getType(), TypeId.STRING),
         valueOfReturnLocal,
         valueOfClassLocal,
         valueOfStringParameterLocal);
-    generatePlainReturnCode(code, valueOfReturnTypeId, valueOfReturnLocal);
+    generatePlainReturnCode(code, classTypeId, valueOfReturnLocal);
     // generate default private constructor and initInstance call
     code = dm.declare(classTypeId.getConstructor(TypeId.STRING, TypeId.INT), ACC_PRIVATE);
-    Local<?> constructorThisLocal = code.getThis(classTypeId);
+    Local<E> constructorThisLocal = code.getThis(classTypeId);
     Local<String> constructorStringParameterLocal = code.getParameter(0, TypeId.STRING);
     Local<Integer> constructorIntParameterLocal = code.getParameter(1, TypeId.INT);
-
-    cv.visitMethodInsn(INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false);
-    cv.visitVarInsn(ALOAD, 0);
-    cv.visitLdcInsn(className);
-    generateParameterReifierCode(new String[0], false /*isStatic*/, cv);
-    cv.visitMethodInsn(
-        INVOKESTATIC,
-        "bsh/This",
-        "initInstance",
-        "(Lbsh/GeneratedClass;Ljava/lang/String;[Ljava/lang/Object;)V",
-        false);
-    cv.visitInsn(RETURN);
-    cv.visitMaxs(0, 0);
+    Local<String> classNameLocal = code.newLocal(TypeId.STRING);
+    Local<Object> objectLocal = code.newLocal(TypeId.OBJECT);
+    Local<Object[]> objectArrayLocal = code.newLocal(objectArrayTypeId);
+    code.invokeSuper(
+        enumTypeId.getConstructor(TypeId.STRING, TypeId.INT),
+        null,
+        constructorThisLocal,
+        constructorStringParameterLocal,
+        constructorIntParameterLocal);
+    code.loadConstant(classNameLocal, className);
+    generateParameterReifierCode(code, new String[0], false /*isStatic*/, constructorIntParameterLocal, objectLocal, objectArrayLocal);
+    code.invokeStatic(
+        TypeId.get(This.class)
+            .getMethod(
+                TypeId.VOID,
+                "initInstance",
+                TypeId.get(GeneratedClass.class),
+                TypeId.STRING,
+                objectArrayTypeId),
+        null,
+        constructorThisLocal,
+        classNameLocal,
+        objectArrayLocal);
+    code.returnVoid();
   }
 
   /**
@@ -1021,35 +1030,17 @@ public class /* Class */ DexGeneratorUtil {
    * @param cv the code visitor to be used to generate the bytecode.
    * @param isStatic the enclosing methods is static
    */
-  private void generateParameterReifierCode(
-      String[] paramTypes, boolean isStatic, final MethodVisitor cv) {
-    cv.visitIntInsn(SIPUSH, paramTypes.length);
-    cv.visitTypeInsn(ANEWARRAY, "java/lang/Object");
+  private <T> void generateParameterReifierCode(Code code,
+      String[] paramTypes, boolean isStatic, Local<Integer> intLocal, Local<T> objectLocal, Local<Object[]> objectArrayLocal, final MethodVisitor cv) {
+    TypeId<Primitive> primitiveTypeId = TypeId.get(Primitive.class);
+    code.loadConstant(intLocal, paramTypes.length);
+    code.newArray(objectArrayLocal, intLocal);
     int localVarIndex = isStatic ? 0 : 1;
     for (int i = 0; i < paramTypes.length; ++i) {
       String param = paramTypes[i];
-      cv.visitInsn(DUP);
-      cv.visitIntInsn(SIPUSH, i);
+      code.loadConstant(intLocal, i);
       if (isPrimitive(param)) {
-        int opcode;
-        switch (param) {
-          case "F":
-            opcode = FLOAD;
-            break;
-          case "D":
-            opcode = DLOAD;
-            break;
-          case "J":
-            opcode = LLOAD;
-            break;
-          default:
-            opcode = ILOAD;
-            break;
-        }
-
-        String type = "bsh/Primitive";
-        cv.visitTypeInsn(NEW, type);
-        cv.visitInsn(DUP);
+        // code.newInstance(objectLocal, primitiveTypeId.getConstructor(TypeId.get(param)), );
         cv.visitVarInsn(opcode, localVarIndex);
         cv.visitMethodInsn(INVOKESPECIAL, type, "<init>", "(" + param + ")V", false);
         cv.visitInsn(AASTORE);
