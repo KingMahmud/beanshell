@@ -167,7 +167,7 @@
       <plugin>
         <groupId>com.helger.maven</groupId>
         <artifactId>ph-javacc-maven-plugin</artifactId>
-        <version>4.0.3</version>
+        <version>4.1.5</version>
         <executions>
           <execution>
             <id>javacc</id>
@@ -249,7 +249,7 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.0.0-M5</version>
         <configuration>
-          <argLine>-XX:+UseSerialGC ${surefireArgLine}</argLine>
+          <argLine>-Xmx1000M -Xms500M -XX:+UseSerialGC ${surefireArgLine}</argLine>
           <systemPropertyVariables>
             <bsh.debugClasses />
             <accessibility>false</accessibility>
