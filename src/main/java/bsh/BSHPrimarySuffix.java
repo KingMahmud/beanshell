@@ -26,14 +26,13 @@
 package bsh;
 
 import java.lang.reflect.Array;
-import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Map.Entry;
 
 class BSHPrimarySuffix extends SimpleNode
 {
     public static final int
-        CLASS = 0,
+        CLASS = 6,
         INDEX = 1,
         NAME = 2,
         PROPERTY = 3,
@@ -43,7 +42,8 @@ class BSHPrimarySuffix extends SimpleNode
     Object index;
     public String field;
     public boolean slice = false, step = false,
-        hasLeftIndex = false, hasRightIndex = false;
+        hasLeftIndex = false, hasRightIndex = false,
+        safeNavigate = false;
 
     BSHPrimarySuffix(int id) { super(id); }
 
@@ -96,12 +96,11 @@ class BSHPrimarySuffix extends SimpleNode
             else
                 obj = ((Node)obj).eval(callstack, interpreter);
         else
-            if ( obj instanceof LHS )
-                try {
-                    obj = ((LHS)obj).getValue();
-                } catch ( UtilEvalError e ) {
-                    throw e.toEvalError( this, callstack );
-                }
+            if ( obj instanceof LHS ) try {
+                obj = ((LHS)obj).getValue();
+            } catch ( UtilEvalError e ) {
+                throw e.toEvalError( this, callstack );
+            }
 
         try
         {
@@ -150,8 +149,11 @@ class BSHPrimarySuffix extends SimpleNode
     private Object doName(
         Object obj, boolean toLHS,
         CallStack callstack, Interpreter interpreter)
-        throws EvalError, ReflectError
-    {
+            throws EvalError, ReflectError {
+        // Safe Navigate operator ?. abort on null
+        if (this.safeNavigate && Primitive.NULL == obj)
+            throw SafeNavigate.doAbort();
+
         // .length on array
         if ( field.equals("length") && obj.getClass().isArray() )
             if ( toLHS )
@@ -180,32 +182,8 @@ class BSHPrimarySuffix extends SimpleNode
         Object[] oa = ((BSHArguments)jjtGetChild(0)).getArguments(
             callstack, interpreter);
 
-        try {
-            return Reflect.invokeObjectMethod(
-                obj, field, oa, interpreter, callstack, this );
-        } catch ( ReflectError e ) {
-            throw new EvalError(
-                "Error in method invocation: " + e.getMessage(),
-                this, callstack, e );
-        } catch ( InvocationTargetException e )
-        {
-            String msg = "Method Invocation "+field;
-            Throwable te = e.getCause();
-
-            /*
-                Try to squeltch the native code stack trace if the exception
-                was caused by a reflective call back into the bsh interpreter
-                (e.g. eval() or source()
-            */
-            boolean isNative = true;
-            if ( te instanceof EvalError )
-                if ( te instanceof TargetError )
-                    isNative = ((TargetError)te).inNativeCode();
-                else
-                    isNative = false;
-
-            throw new TargetError( msg, te, this, callstack, isNative );
-        }
+        return Reflect.invokeObjectMethod(
+            obj, field, oa, interpreter, callstack, this );
 
     }
 
@@ -384,14 +362,16 @@ class BSHPrimarySuffix extends SimpleNode
     @Override
     public String toString() {
         if (operation == INDEX)
-            return super.toString() + ": [" + hasLeftIndex + ":" + slice + " " + hasRightIndex + ":" + step + "]";
+            return super.toString() + ":INDEX [" + hasLeftIndex + ":" + slice + " " + hasRightIndex + ":" + step + "]";
         if (operation == NAME)
-            return super.toString() + ": " + field;
+            return super.toString() + ":NAME " + field;
         if (operation == PROPERTY)
-            return super.toString() + ": {}";
+            return super.toString() + ":PROPERTY {}";
         if (operation == NEW)
-            return super.toString() + ": new";
-        return super.toString() + ": class"; // CLASS == 0
+            return super.toString() + ":NEW new";
+        if (operation == CLASS)
+            return super.toString() + ":CLASS class";
+        return super.toString() + ":NO OPERATION";
     }
 }
 
