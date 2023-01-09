@@ -251,6 +251,21 @@ public class InterpreterTest {
     }
 
     @Test
+    public void get_default_output() throws Exception {
+        PrintStream berr = new PrintStream(new ByteArrayOutputStream());
+        PrintStream bout = new PrintStream(new ByteArrayOutputStream());
+
+        Interpreter bsh = new Interpreter(new StringReader(""), bout, berr, false);
+        bsh.setExitOnEOF(false);
+        assertEquals(berr, bsh.getErr());
+        assertEquals(bout, bsh.getOut());
+        bsh.setErr(null);
+        bsh.setOut(null);
+        assertEquals(System.err, bsh.getErr());
+        assertEquals(System.out, bsh.getOut());
+    }
+
+    @Test
     public void set_prompt_by_interpreter() throws Exception {
         final StringReader in = new StringReader("\n");
         for (String P: new String[] { "abc> ", "cde# " }) {
@@ -266,12 +281,56 @@ public class InterpreterTest {
     }
 
     @Test
+    public void overwrite_get_prompt_by_interpreter() throws Exception {
+        final StringReader in = new StringReader("\n");
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream() ) {
+            Interpreter bsh = new Interpreter(in, new PrintStream(baos),
+                new PrintStream(baos), true);
+
+            bsh.setExitOnEOF(false);
+            bsh.eval("getBshPrompt() { return 'abc>'; }");
+            bsh.run();
+            assertTrue(baos.toString().contains("abc>"));
+        }
+    }
+
+    @Test
+    public void no_debug_prompt_interpreter() throws Exception {
+        final StringReader in = new StringReader("\nInterpreter.DEBUG.set(true);\n");
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            CommandLineReader repl = new CommandLineReader(in) ) {
+            Interpreter bsh = new Interpreter(repl, new PrintStream(baos),
+                new PrintStream(baos), true);
+
+            bsh.setExitOnEOF(false);
+            bsh.run();
+            Interpreter.DEBUG.set(false);
+            assertTrue(baos.toString().contains("bsh %"));
+            assertEquals(2, baos.toString().split("Debug:").length);
+        }
+    }
+
+    @Test
+    public void overwrite_get_prompt_exception() throws Exception {
+        final StringReader in = new StringReader("\n");
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream() ) {
+            Interpreter bsh = new Interpreter(in, new PrintStream(baos),
+                new PrintStream(baos), true);
+
+            bsh.setExitOnEOF(false);
+            bsh.eval("getBshPrompt() { throw new Exception('prompt exception'); }");
+            bsh.run();
+            assertTrue(baos.toString().contains("bsh %"));
+        }
+    }
+
+    @Test
     public void reset_interpreter() throws Exception {
         final Interpreter bsh = new Interpreter();
         assertEquals("test123", bsh.eval("'test' + (100 + 20 + 3)"));
         long b4 = Runtime.getRuntime().freeMemory();
         bsh.reset();
-        System.gc();
+        TestUtil.cleanUp();
         assertThat(b4, lessThan(Runtime.getRuntime().freeMemory()));
     }
 
