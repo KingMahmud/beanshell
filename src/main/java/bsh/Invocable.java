@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.jetbrains.annotations.NotNull;
 
 /** Member wrappers to represent invocable members. */
 public abstract class Invocable implements Member {
@@ -162,11 +163,8 @@ public abstract class Invocable implements Member {
    *
    * @return the bytecode type descriptor
    */
-  @SuppressWarnings("SimplifyStreamApiCallChains")
   public String getMethodDescriptor() {
-    return "("
-        + Arrays.stream(getParamTypeDescriptors()).collect(Collectors.joining())
-        + ")"
+    return Arrays.stream(getParamTypeDescriptors()).collect(Collectors.joining("", "(", ")"))
         + getReturnTypeDescriptor();
   }
 
@@ -191,9 +189,13 @@ public abstract class Invocable implements Member {
   }
 
   /** Basic parameter collection with pulling inherited cascade chaining. */
-  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object @NotNull [] params) throws Throwable {
     if (getLastParameterIndex() > params.length)
-            throw new InvocationTargetException(null, "Insufficient parameters passed for method: " + getName() + Arrays.asList(getParameterTypes()));
+      throw new InvocationTargetException(
+          null,
+          "Insufficient parameters passed for method: "
+              + getName()
+              + Arrays.asList(getParameterTypes()));
     parameters.clear();
     for (int i = 0; i < getLastParameterIndex(); i++)
       parameters.add(coerceToType(params[i], getParameterTypes()[i]));
@@ -356,7 +358,7 @@ abstract class ExecutingInvocable extends Invocable {
   Caused by: java.lang.IllegalArgumentException: wrong number of arguments
   */
   @Override
-  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object @NotNull [] params) throws Throwable {
     super.collectParamaters(base, params);
     if (isVarArgs()) {
       // if (getLastParameterIndex() < params.length) {
@@ -422,7 +424,7 @@ class ConstructorInvocable extends ExecutingInvocable {
    * required. {@inheritDoc}
    */
   @Override
-  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object @NotNull [] params) throws Throwable {
     if (isInnerClass() && !isStatic())
       params = Stream.concat(Stream.of(base), Stream.of(params)).toArray();
     return super.collectParamaters(base, params);
@@ -484,7 +486,7 @@ class MethodInvocable extends ExecutingInvocable {
 
   /** Pull the cascade inheritance chain for parameter collection. {@inheritDoc} */
   @Override
-  public List<Object> collectParamaters(Object base, Object[] params) throws Throwable {
+  public List<Object> collectParamaters(Object base, Object @NotNull [] params) throws Throwable {
     super.collectParamaters(base, params);
     if (!isStatic()) parameters.add(0, base);
     return parameters;

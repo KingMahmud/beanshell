@@ -337,5 +337,11 @@
       <artifactId>dalvik-dx</artifactId>
       <version>11.0.0_r3</version>
     </dependency>
+    <dependency>
+      <groupId>org.jetbrains</groupId>
+      <artifactId>annotations</artifactId>
+      <version>23.1.0</version>
+      <scope>compile</scope>
+    </dependency>
   </dependencies>
 </project>
