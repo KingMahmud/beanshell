@@ -107,19 +107,28 @@ public class /* Class */ DexGeneratorUtil {
   private static final String OBJECT = "Ljava/lang/Object;";
 
   private final String className;
+
   private final String classDescript;
+
   /** fully qualified class name (with package) e.g. foo/bar/Blah */
   private final String fqClassName;
 
   private final String uuid;
+
   private final Class<?> superClass;
 
   private final String superClassName;
+
   private final Class<?>[] interfaces;
+
   private final Variable[] vars;
+
   private final DelayedEvalBshMethod[] constructors;
+
   private final DelayedEvalBshMethod[] methods;
+
   private final Modifiers classModifiers;
+
   private final ClassGenerator.Type type;
 
   /**
@@ -159,8 +168,11 @@ public class /* Class */ DexGeneratorUtil {
     List<DelayedEvalBshMethod> methodsl = new ArrayList<>();
     String classBaseName = Types.getBaseName(className); // for inner classes
     for (DelayedEvalBshMethod bshmethod : bshmethods)
-      if (bshmethod.getName().equals(classBaseName)) consl.add(bshmethod);
-      else methodsl.add(bshmethod);
+      if (bshmethod.getName().equals(classBaseName)) {
+        if (!bshmethod.modifiers.isAppliedContext(Modifiers.CONSTRUCTOR))
+          bshmethod.modifiers.changeContext(Modifiers.CONSTRUCTOR);
+        consl.add(bshmethod);
+      } else methodsl.add(bshmethod);
 
     constructors = consl.toArray(new DelayedEvalBshMethod[0]);
     methods = methodsl.toArray(new DelayedEvalBshMethod[0]);
@@ -185,20 +197,17 @@ public class /* Class */ DexGeneratorUtil {
   /** Translate bsh.Modifiers into dex modifier bitflags. */
   private static int getDexModifiers(Modifiers modifiers) {
     int mods = 0;
-    if (modifiers == null) return mods;
-
-    if (modifiers.hasModifier("public")) mods += ACC_PUBLIC;
-    if (modifiers.hasModifier("private")) mods += ACC_PRIVATE;
-    if (modifiers.hasModifier("protected")) mods += ACC_PROTECTED;
-    if (modifiers.hasModifier("static")) mods += ACC_STATIC;
-    if (modifiers.hasModifier("synchronized")) mods += ACC_SYNCHRONIZED;
-    if (modifiers.hasModifier("abstract")) mods += ACC_ABSTRACT;
-
-    if ((mods & ACCESS_MODIFIERS) == 0) {
+    if (modifiers.hasModifier(ACC_PUBLIC)) mods |= ACC_PUBLIC;
+    if (modifiers.hasModifier(ACC_PRIVATE)) mods |= ACC_PRIVATE;
+    if (modifiers.hasModifier(ACC_PROTECTED)) mods |= ACC_PROTECTED;
+    if (modifiers.hasModifier(ACC_STATIC)) mods |= ACC_STATIC;
+    if (modifiers.hasModifier(ACC_SYNCHRONIZED)) mods |= ACC_SYNCHRONIZED;
+    if (modifiers.hasModifier(ACC_ABSTRACT)) mods |= ACC_ABSTRACT;
+    // if no access modifiers declared then we make it public
+    if ((modifiers.getModifiers() & ACCESS_MODIFIERS) == 0) {
       mods |= ACC_PUBLIC;
-      modifiers.addModifier("public");
+      modifiers.addModifier(ACC_PUBLIC);
     }
-
     return mods;
   }
 
@@ -576,6 +585,7 @@ public class /* Class */ DexGeneratorUtil {
               != classContainsMethod(superClass, method.getName(), method.getParamTypeDescriptors())
           && !isStatic)
         generateSuperDelegateMethod(
+            superClass,
             superClassName,
             method.getName(),
             method.getReturnTypeDescriptor(),
@@ -641,7 +651,13 @@ public class /* Class */ DexGeneratorUtil {
         constructorStringParameterLocal,
         constructorIntParameterLocal);
     code.loadConstant(classNameLocal, className);
-    generateParameterReifierCode(code, new String[0], false /*isStatic*/, constructorIntParameterLocal, objectLocal, objectArrayLocal);
+    generateParameterReifierCode(
+        code,
+        new String[0],
+        false /*isStatic*/,
+        constructorIntParameterLocal,
+        objectLocal,
+        objectArrayLocal);
     code.invokeStatic(
         TypeId.get(This.class)
             .getMethod(
@@ -981,6 +997,7 @@ public class /* Class */ DexGeneratorUtil {
    */
   // Maybe combine this with generateMethod()
   private void generateSuperDelegateMethod(
+      Class<?> superClass,
       String superClassName,
       String methodName,
       String returnType,
@@ -1001,7 +1018,11 @@ public class /* Class */ DexGeneratorUtil {
     // Add method body
     MethodVisitor cv =
         cw.visitMethod(
-            modifiers, "_bshSuper" + methodName, methodDescriptor, paramTypesSig, exceptions);
+            modifiers,
+            "_bshSuper" + superClass.getSimpleName() + methodName,
+            methodDescriptor,
+            paramTypesSig,
+            exceptions);
 
     cv.visitVarInsn(ALOAD, 0);
     // Push vars
@@ -1030,8 +1051,14 @@ public class /* Class */ DexGeneratorUtil {
    * @param cv the code visitor to be used to generate the bytecode.
    * @param isStatic the enclosing methods is static
    */
-  private <T> void generateParameterReifierCode(Code code,
-      String[] paramTypes, boolean isStatic, Local<Integer> intLocal, Local<T> objectLocal, Local<Object[]> objectArrayLocal, final MethodVisitor cv) {
+  private <T> void generateParameterReifierCode(
+      Code code,
+      String[] paramTypes,
+      boolean isStatic,
+      Local<Integer> intLocal,
+      Local<T> objectLocal,
+      Local<Object[]> objectArrayLocal,
+      final MethodVisitor cv) {
     TypeId<Primitive> primitiveTypeId = TypeId.get(Primitive.class);
     code.loadConstant(intLocal, paramTypes.length);
     code.newArray(objectArrayLocal, intLocal);
