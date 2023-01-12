@@ -71,7 +71,7 @@ class BSHClassDeclaration extends SimpleNode
         int child = 0;
 
         // resolve superclass if any
-        Class superClass = null;
+        Class<?> superClass = null;
         final List<BshMethod> meths = new ArrayList<>(0);
         if ( extend ) {
             BSHAmbiguousName superNode = (BSHAmbiguousName)jjtGetChild(child++);
@@ -89,7 +89,7 @@ class BSHClassDeclaration extends SimpleNode
         }
 
         // Get interfaces
-        Class [] interfaces = new Class[numInterfaces];
+        Class<?>[] interfaces = new Class[numInterfaces];
         for( int i=0; i<numInterfaces; i++) {
             BSHAmbiguousName node = (BSHAmbiguousName)jjtGetChild(child++);
             interfaces[i] = node.toClass(callstack, interpreter);
@@ -100,6 +100,9 @@ class BSHClassDeclaration extends SimpleNode
         }
 
         BSHBlock block = (BSHBlock) jjtGetChild(child);
+
+        if (type == Type.INTERFACE) // this should ideally happen in the parser
+                modifiers.changeContext(Modifiers.INTERFACE);
 
         Class<?> clas = ClassGenerator.getClassGenerator().generateClass(
             name, modifiers, interfaces, superClass, block, type,

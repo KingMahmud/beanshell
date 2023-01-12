@@ -60,9 +60,9 @@ public final class ClassGenerator {
      * This is not a normal function of the Java reflection API and is
      * provided by generated class accessor methods.
      */
-    public Object invokeSuperclassMethod(BshClassManager bcm, Object instance, String methodName, Object[] args) throws UtilEvalError, ReflectError, InvocationTargetException {
+    public Object invokeSuperclassMethod(BshClassManager bcm, Object instance, Class<?> classStatic, String methodName, Object[] args) throws UtilEvalError, ReflectError, InvocationTargetException {
         // Delegate to the static method
-        return invokeSuperclassMethodImpl(bcm, instance, methodName, args);
+        return invokeSuperclassMethodImpl(bcm, instance, classStatic, methodName, args);
     }
 
     /**
@@ -75,8 +75,6 @@ public final class ClassGenerator {
         String className = enclosingNameSpace.isClass ? (enclosingNameSpace.getName() + "$" + name) : name;
         String fqClassName = packageName == null ? className : packageName + "." + className;
         BshClassManager bcm = interpreter.getClassManager();
-        // Race condition here...
-        bcm.definingClass(fqClassName);
 
         // Create the class static namespace
         NameSpace classStaticNameSpace = new NameSpace(enclosingNameSpace, className);
@@ -132,8 +130,6 @@ public final class ClassGenerator {
         classStaticNameSpace.setClassStatic(genClass);
 
         Interpreter.debug(classStaticNameSpace);
-
-        bcm.doneDefiningClass(fqClassName);
 
         if (interpreter.getStrictJava())
             ClassGeneratorUtil.checkAbstractMethodImplementation(genClass);
@@ -272,21 +268,21 @@ public final class ClassGenerator {
         }
     }
 
+    /** Find and invoke the super class delegate method. */
     public static Object invokeSuperclassMethodImpl(BshClassManager bcm,
-            Object instance, String methodName, Object[] args)
+            Object instance, Class<?> classStatic, String methodName, Object[] args)
                 throws UtilEvalError, ReflectError, InvocationTargetException {
-        String superName = BSHSUPER + methodName;
+        Class<?> superClass = classStatic.getSuperclass();
+        Class<?> clas = instance.getClass();
+        String superName = BSHSUPER + superClass.getSimpleName() + methodName;
 
         // look for the specially named super delegate method
-        Class<?> clas = instance.getClass();
         Invocable superMethod = Reflect.resolveJavaMethod(clas, superName,
                 Types.getTypes(args), false/*onlyStatic*/);
         if (superMethod != null) return superMethod.invoke(instance, args);
 
-
         // No super method, try to invoke regular method
         // could be a superfluous "super." which is legal.
-        Class<?> superClass = clas.getSuperclass();
         superMethod = Reflect.resolveExpectedJavaMethod(bcm, superClass, instance,
                 methodName, args, false/*onlyStatic*/);
         return superMethod.invoke(instance, args);
