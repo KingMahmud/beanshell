@@ -212,7 +212,7 @@ public abstract class Invocable implements Member {
    */
   protected Object coerceToType(Object param, Class<?> type) throws Throwable {
     Class<?> pClass = Types.getType(param);
-    if (null != pClass && !type.isAssignableFrom(pClass))
+    if (null == pClass || !type.isAssignableFrom(pClass))
       param = Types.castObject(param, type, Types.CAST);
     return Primitive.unwrap(param);
   }
@@ -349,14 +349,14 @@ abstract class ExecutingInvocable extends Invocable {
    * parameters supplied as an array or as separate args. {@inheritDoc}
    */
   /*
-  Commenting down line 365 and 381 fixes it
-  bsh.BshScriptTestCase.varargs.bsh  Time elapsed: 0.101 s  <<< ERROR!
-  java.lang.RuntimeException: varargs.bsh
-  Caused by: bsh.TargetError:
-  Sourced file: varargs.bsh : Object constructor : at Line: 101 : in file: varargs.bsh : new VarArgsClass ( )
-  Caused by: java.lang.IllegalArgumentException: wrong number of arguments
-  Caused by: java.lang.IllegalArgumentException: wrong number of arguments
-  */
+   * Commenting down line 365 and 381 fixes it
+   * bsh.BshScriptTestCase.varargs.bsh  Time elapsed: 0.101 s  <<< ERROR!
+   * java.lang.RuntimeException: varargs.bsh
+   * Caused by: bsh.TargetError:
+   * Sourced file: varargs.bsh : Object constructor : at Line: 101 : in file: varargs.bsh : new VarArgsClass ( )
+   * Caused by: java.lang.IllegalArgumentException: wrong number of arguments
+   * Caused by: java.lang.IllegalArgumentException: wrong number of arguments
+   */
   @Override
   public List<Object> collectParamaters(Object base, Object @NotNull [] params) throws Throwable {
     super.collectParamaters(base, params);
